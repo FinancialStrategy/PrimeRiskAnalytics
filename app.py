@@ -23,6 +23,11 @@ from plotly.subplots import make_subplots
 
 import matplotlib
 matplotlib.use("Agg")
+matplotlib.use("Agg")
+# Build font cache now (avoids memory spike at first plot)
+import matplotlib.font_manager
+matplotlib.font_manager._load_fontmanager(try_read_cache=False)
+plt.rcParams["font.family"] = "DejaVu Sans"
 import matplotlib.pyplot as plt
 plt.rcParams["font.family"] = "DejaVu Sans"
 # Reduce memory footprint for server‑side rendering
