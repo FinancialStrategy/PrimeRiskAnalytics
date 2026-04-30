@@ -949,3 +949,23 @@ def make_app():
 
 app = make_app()
 app.servable(title=APP_TITLE)
+# ---------- Fast health endpoint for Render ----------
+import os, threading, asyncio
+from aiohttp import web
+
+async def health(request):
+    return web.Response(text="ok")
+
+def run_health():
+    port = int(os.environ.get("PORT", 8000))
+    health_app = web.Application()
+    health_app.router.add_get("/health", health)
+    runner = web.AppRunner(health_app)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(runner.setup())
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    loop.run_until_complete(site.start())
+    print(f"Health server listening on port {port}")
+
+threading.Thread(target=run_health, daemon=True).start()
