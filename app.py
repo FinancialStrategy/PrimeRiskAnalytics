@@ -1,10 +1,10 @@
 # =============================================================================
-# QFA Hedge Fund Dashboard – Render Ready (Institutional Edition)
+# QFA Hedge Fund Dashboard – ULTRA STABLE v9 Render Free Edition
 # Fully reactive: pn.widgets + pn.bind, Yahoo-only data, ^GSPC benchmark, RF 4.5%
 # Advanced Risk Analytics (Historical / Parametric / Monte Carlo VaR/CVaR,
 # Rolling Beta, VaR/Nav ratio, Historical Stress Testing, Backtesting)
 # Expanded Portfolio Optimizer: all core PyPortfolioOpt strategies explained
-# Memory‑optimised for Render free tier (512 MiB)
+# Ultra memory-optimised for Render free tier (512 MB): lazy tabs, no startup tearsheet/optimizer
 # =============================================================================
 import os, io, time, math, json, warnings, traceback
 from pathlib import Path
@@ -21,44 +21,66 @@ import panel as pn
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
+# Matplotlib is kept in Agg mode only for optional report generation.
+# Do NOT force-build the font cache on Render Free; it causes a RAM spike.
 import matplotlib
 matplotlib.use("Agg")
-matplotlib.use("Agg")
-# Build font cache now (avoids memory spike at first plot)
-import matplotlib.font_manager
-matplotlib.font_manager._load_fontmanager(try_read_cache=False)
-plt.rcParams["font.family"] = "DejaVu Sans"
 import matplotlib.pyplot as plt
 plt.rcParams["font.family"] = "DejaVu Sans"
-# Reduce memory footprint for server‑side rendering
-matplotlib.rcParams['figure.max_open_warning'] = 0
-matplotlib.rcParams['figure.dpi'] = 72
+matplotlib.rcParams["figure.max_open_warning"] = 0
+matplotlib.rcParams["figure.dpi"] = 72
 
-try:
-    import quantstats as qs
-    QUANTSTATS_AVAILABLE = True
-except Exception:
-    qs = None
-    QUANTSTATS_AVAILABLE = False
+# Heavy libraries are not imported at startup on Render Free.
+qs = None
+QUANTSTATS_AVAILABLE = False
 
-try:
-    import talib
-    TALIB_AVAILABLE = True
-except Exception:
-    talib = None
-    TALIB_AVAILABLE = False
+# Heavy optional libraries are lazy-loaded only when their tab/function is used.
+# This keeps Render Free 512 MB stable while preserving TA-Lib and PyPortfolioOpt features.
+talib = None
+TALIB_AVAILABLE = False
 
-try:
-    from pypfopt import expected_returns, risk_models
-    from pypfopt.efficient_frontier import EfficientFrontier
-    from pypfopt.hierarchical_portfolio import HRPOpt
-    PYPFOPT_AVAILABLE = True
-except Exception:
-    expected_returns = None; risk_models = None
-    EfficientFrontier = None; HRPOpt = None
-    PYPFOPT_AVAILABLE = False
+def load_talib() -> bool:
+    """Render-safe TA-Lib loader. Imported only when indicators are computed."""
+    global talib, TALIB_AVAILABLE
+    if talib is not None:
+        return True
+    try:
+        import talib as _talib
+        talib = _talib
+        TALIB_AVAILABLE = True
+    except Exception:
+        talib = None
+        TALIB_AVAILABLE = False
+    return TALIB_AVAILABLE
 
-from scipy import stats   # for Monte Carlo VaR / t‑fitting
+expected_returns = None
+risk_models = None
+EfficientFrontier = None
+HRPOpt = None
+PYPFOPT_AVAILABLE = False
+
+def load_pypfopt() -> bool:
+    """Render-safe PyPortfolioOpt loader. Imported only when Portfolio Optimizer is opened."""
+    global expected_returns, risk_models, EfficientFrontier, HRPOpt, PYPFOPT_AVAILABLE
+    if EfficientFrontier is not None and expected_returns is not None and risk_models is not None:
+        PYPFOPT_AVAILABLE = True
+        return True
+    try:
+        from pypfopt import expected_returns as _expected_returns, risk_models as _risk_models
+        from pypfopt.efficient_frontier import EfficientFrontier as _EfficientFrontier
+        from pypfopt.hierarchical_portfolio import HRPOpt as _HRPOpt
+        expected_returns = _expected_returns
+        risk_models = _risk_models
+        EfficientFrontier = _EfficientFrontier
+        HRPOpt = _HRPOpt
+        PYPFOPT_AVAILABLE = True
+    except Exception:
+        expected_returns = None
+        risk_models = None
+        EfficientFrontier = None
+        HRPOpt = None
+        PYPFOPT_AVAILABLE = False
+    return PYPFOPT_AVAILABLE
 
 # -----------------------------------------------------------------------------
 # Panel Extension
@@ -68,7 +90,7 @@ pn.extension("plotly", "tabulator", sizing_mode="stretch_width", notifications=T
 # -----------------------------------------------------------------------------
 # Global Institutional Configuration
 # -----------------------------------------------------------------------------
-APP_TITLE = "QFA Hedge Fund Dashboard"
+APP_TITLE = "QFA Hedge Fund Dashboard - ULTRA STABLE v10"
 OUTPUT_DIR = Path("outputs")
 OUTPUT_DIR.mkdir(exist_ok=True)
 
@@ -241,11 +263,11 @@ def status_badge(label: str, ok: bool):
 # -----------------------------------------------------------------------------
 # Yahoo‑only Data Layer
 # -----------------------------------------------------------------------------
-@lru_cache(maxsize=512)
+@lru_cache(maxsize=128)
 def fetch_ohlcv_cached(ticker: str, start: str, end: str, cache_bucket: int) -> pd.DataFrame:
     try:
         df = yf.download(ticker, start=start, end=end, progress=False,
-                         auto_adjust=False, threads=False, timeout=25)
+                         auto_adjust=False, threads=False, timeout=18)
         if df is None or df.empty: return pd.DataFrame()
         if isinstance(df.columns, pd.MultiIndex):
             if ticker in df.columns.get_level_values(-1):
@@ -298,7 +320,7 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     wealth = (1 + d["Return"].fillna(0)).cumprod()
     d["Drawdown"] = wealth / wealth.cummax() - 1
 
-    if TALIB_AVAILABLE:
+    if load_talib():
         try:
             close = d["Close"].astype(float).values
             high = d["High"].astype(float).values
@@ -311,7 +333,7 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
             d["ATR"] = talib.ATR(high, low, close, timeperiod=14)
             slowk, slowd = talib.STOCH(high, low, close, fastk_period=14, slowk_period=3, slowd_period=3)
             d["Stoch K"], d["Stoch D"] = slowk, slowd
-            d["Indicator Engine"] = "TA-Lib"
+            d["Indicator Engine"] = "TA-Lib Lazy"
             return d
         except: pass
 
@@ -390,7 +412,8 @@ def parametric_var(returns: pd.Series, conf: float):
 def parametric_cvar(returns: pd.Series, conf: float):
     mu = returns.mean(); sigma = returns.std()
     return mu - sigma*stats.norm.pdf(stats.norm.ppf(1-conf))/(1-conf)
-def monte_carlo_var(returns: pd.Series, conf: float, n_sim=10000, dist='t'):
+def monte_carlo_var(returns: pd.Series, conf: float, n_sim=1500, dist='normal'):
+    from scipy import stats
     np.random.seed(42)
     if len(returns) < 30: return np.nan
     if dist == 'normal':
@@ -400,7 +423,8 @@ def monte_carlo_var(returns: pd.Series, conf: float, n_sim=10000, dist='t'):
         params = stats.t.fit(returns.dropna())
         sim = stats.t.rvs(df=params[0], loc=params[1], scale=params[2], size=n_sim)
     return np.percentile(sim, 100*(1-conf))
-def monte_carlo_cvar(returns: pd.Series, conf: float, n_sim=10000, dist='t'):
+def monte_carlo_cvar(returns: pd.Series, conf: float, n_sim=1500, dist='normal'):
+    from scipy import stats
     np.random.seed(42)
     if len(returns) < 30: return np.nan
     if dist == 'normal':
@@ -533,7 +557,7 @@ def build_kpi(ticker, benchmark_label, start, end):
     metrics = risk_metrics(asset["Return"])
     base = add_indicators(fetch_ohlcv(bench, start, end))
     act = {} if base.empty else active_metrics(asset["Return"], base["Return"])
-    engine = asset["Indicator Engine"].iloc[-1] if "Indicator Engine" in asset.columns else ("TA-Lib" if TALIB_AVAILABLE else "Formula fallback")
+    engine = asset["Indicator Engine"].iloc[-1] if "Indicator Engine" in asset.columns else ("TA-Lib Lazy" if load_talib() else "Formula fallback")
     return make_kpi_cards(ticker, benchmark_label, metrics, act, engine)
 
 def build_price_chart(ticker, start, end):
@@ -623,7 +647,10 @@ def build_universe_board(asset_class, region, start, end):
     )
 
 def build_tearsheet(ticker, benchmark_label, start, end):
-    if not QUANTSTATS_AVAILABLE: return empty_state("QuantStats unavailable", "")
+    try:
+        import quantstats as qs
+    except Exception:
+        return empty_state("Tearsheet unavailable in ULTRA STABLE mode", "Install quantstats and move this behind a button if you need it on a paid Render instance.")
     bench = BENCHMARKS[benchmark_label]
     asset = fetch_ohlcv(ticker, start, end); base = fetch_ohlcv(bench, start, end)
     if asset.empty or base.empty: return empty_state("Tearsheet unavailable", "")
@@ -663,12 +690,13 @@ def build_stress(asset_class, region, start, end):
 # ENHANCED PORTFOLIO OPTIMIZER – all core strategies with institutional explanations
 # =============================================================================
 def build_optimizer(asset_class, region, start, end):
+    if not load_pypfopt():
+        return empty_state("PyPortfolioOpt unavailable", "Install PyPortfolioOpt + cvxpy solvers. Optimizer imports are lazy-loaded for Render stability.")
+
     tickers = get_tickers(asset_class, region)
     prices = fetch_price_matrix(tickers, start, end)
     if prices.empty or prices.shape[1] < 3:
         return empty_state("Optimizer unavailable", "At least 3 instruments with matched Yahoo data required.")
-    if not PYPFOPT_AVAILABLE:
-        return empty_state("PyPortfolioOpt unavailable", "Install PyPortfolioOpt.")
 
     try:
         mu = expected_returns.mean_historical_return(prices, frequency=TRADING_DAYS)
@@ -903,7 +931,7 @@ def make_app():
     region = pn.widgets.Select(name="Region", options=get_regions(default_asset), value=default_region)
     ticker = pn.widgets.Select(name="Instrument", options=get_tickers(default_asset, default_region), value=default_ticker)
     benchmark = pn.widgets.Select(name="Benchmark", options=list(BENCHMARKS.keys()), value="S&P 500 Index")
-    start_date = pn.widgets.DatePicker(name="Start Date", value=datetime(2018,1,1))
+    start_date = pn.widgets.DatePicker(name="Start Date", value=datetime(2020,1,1))
     end_date = pn.widgets.DatePicker(name="End Date", value=datetime.now())
     report_button = pn.widgets.Button(name="Generate Selected ETF HTML Report", button_type="primary")
     report_status = pn.pane.Markdown("")
@@ -930,24 +958,25 @@ def make_app():
         pn.pane.Markdown("### Benchmark & Period"),
         benchmark, start_date, end_date,
         pn.Spacer(height=8), report_button, report_status,
-        pn.pane.HTML(f'<div class="qfa-note">{status_badge("TA-Lib Active", TALIB_AVAILABLE)} {status_badge("QuantStats Active", QUANTSTATS_AVAILABLE)} {status_badge("PyPortfolioOpt Active", PYPFOPT_AVAILABLE)}<br><br><b>RF:</b> {RISK_FREE_RATE:.2%}<br><b>Data policy:</b> Yahoo-only matched data.<br><b>Benchmark:</b> ^GSPC</div>', sizing_mode="stretch_width"),
+        pn.pane.HTML(f'<div class="qfa-note">{status_badge("TA-Lib Lazy", TALIB_AVAILABLE)} {status_badge("QuantStats Active", QUANTSTATS_AVAILABLE)} {status_badge("PyPortfolioOpt Lazy", PYPFOPT_AVAILABLE)}<br><br><b>RF:</b> {RISK_FREE_RATE:.2%}<br><b>Mode:</b> ULTRA STABLE v10 / Render Free + Lazy TA-Lib + Lazy PyPortfolioOpt<br><b>Data policy:</b> Yahoo-only matched data.<br><b>Benchmark:</b> ^GSPC</div>', sizing_mode="stretch_width"),
         width=340, height=980, sizing_mode="fixed",
         styles={"background":"#f8fafc","padding":"20px","border-right":"1px solid #dbe4ef","overflow-y":"auto"}
     )
 
-    header = pn.pane.HTML(f'<div class="qfa-header"><div class="qfa-title">{APP_TITLE}</div><div class="qfa-subtitle">Institutional hedge‑fund analytics: KPI scorecard, TA‑Lib technicals, VaR/CVaR, benchmark relative, QuantStats tearsheet, full portfolio construction & advanced risk.</div></div>', sizing_mode="stretch_width")
+    header = pn.pane.HTML(f'<div class="qfa-header"><div class="qfa-title">{APP_TITLE}</div><div class="qfa-subtitle">Institutional hedge-fund analytics optimized for Render Free 512 MB: KPI scorecard, TA-Lib technicals, risk metrics, benchmark relative, universe board, stress testing and lazy PyPortfolioOpt optimizer. Heavy engines are never rendered at startup.</div></div>', sizing_mode="stretch_width")
 
+    # ULTRA STABLE v10: dynamic=True prevents Panel from rendering every tab at startup.
+    # TA-Lib and PyPortfolioOpt are preserved with lazy imports and lazy tab rendering.
     tabs = pn.Tabs(
         ("Executive KPI Dashboard", pn.bind(build_kpi, ticker, benchmark, start_date, end_date)),
-        ("Price & TA‑Lib", pn.bind(build_price_chart, ticker, start_date, end_date)),
+        ("Price & TA-Lib", pn.bind(build_price_chart, ticker, start_date, end_date)),
         ("Risk Metrics", pn.bind(build_risk_chart, ticker, start_date, end_date)),
         ("Benchmark Relative", pn.bind(build_benchmark_relative, ticker, benchmark, start_date, end_date)),
-        ("Advanced Risk Analytics", pn.bind(build_advanced_risk, ticker, benchmark, start_date, end_date)),
         ("Investment Universe", pn.bind(build_universe_board, asset_class, region, start_date, end_date)),
-        ("Portfolio Optimizer", pn.bind(build_optimizer, asset_class, region, start_date, end_date)),
         ("Stress Testing", pn.bind(build_stress, asset_class, region, start_date, end_date)),
-        ("Tearsheet", pn.bind(build_tearsheet, ticker, benchmark, start_date, end_date)),
-        dynamic=False, sizing_mode="stretch_width"
+        ("Portfolio Optimizer", pn.bind(build_optimizer, asset_class, region, start_date, end_date)),
+        dynamic=True,
+        sizing_mode="stretch_width",
     )
 
     main = pn.Column(pn.pane.HTML(css(), sizing_mode="stretch_width"), header, tabs,
