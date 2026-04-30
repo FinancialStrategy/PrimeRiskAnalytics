@@ -3,12 +3,12 @@ services:
     name: qfa-hedge-fund-dashboard
     env: python
     plan: free
-    buildCommand: pip install --upgrade pip setuptools wheel && pip install -r requirements.txt
-    startCommand: panel serve app.py --address 0.0.0.0 --port $PORT --allow-websocket-origin=${RENDER_EXTERNAL_HOSTNAME} --num-procs 1 --num-threads 2 --session-token-expiration 300 --check-unused-sessions 1000 --liveness-endpoint /liveness
+    buildCommand: pip install -r requirements.txt
+    startCommand: panel serve app.py --address 0.0.0.0 --port $PORT --allow-websocket-origin=${RENDER_EXTERNAL_HOSTNAME} --num-procs 1 --unused-session-lifetime 30000 --check-unused-sessions 30000
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.9
-      - key: MPLBACKEND
-        value: Agg
       - key: PYTHONUNBUFFERED
         value: "1"
+      - key: MPLCONFIGDIR
+        value: "/tmp/matplotlib"
+      - key: PANEL_LOG_LEVEL
+        value: "warning"
