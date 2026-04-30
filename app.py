@@ -4,6 +4,7 @@
 # Advanced Risk Analytics (Historical / Parametric / Monte Carlo VaR/CVaR,
 # Rolling Beta, VaR/Nav ratio, Historical Stress Testing, Backtesting)
 # Expanded Portfolio Optimizer: all core PyPortfolioOpt strategies explained
+# Memory‑optimised for Render free tier (512 MiB)
 # =============================================================================
 import os, io, time, math, json, warnings, traceback
 from pathlib import Path
@@ -24,6 +25,9 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 plt.rcParams["font.family"] = "DejaVu Sans"
+# Reduce memory footprint for server‑side rendering
+matplotlib.rcParams['figure.max_open_warning'] = 0
+matplotlib.rcParams['figure.dpi'] = 72
 
 try:
     import quantstats as qs
@@ -71,7 +75,7 @@ CACHE_TTL_SECONDS = 900
 FONT_STACK = "Inter, DejaVu Sans, Segoe UI, Helvetica, Arial, sans-serif"
 
 # -----------------------------------------------------------------------------
-# Investment Universe (unchanged, but included for completeness)
+# Investment Universe
 # -----------------------------------------------------------------------------
 UNIVERSE = {
     "Equity ETF": {
@@ -371,7 +375,7 @@ def active_metrics(asset_returns: pd.Series, bench_returns: pd.Series) -> dict:
     return {"Tracking Error":te,"Information Ratio":ir,"Beta":beta,"Alpha":alpha,"Correlation":corr}
 
 # -----------------------------------------------------------------------------
-# Advanced VaR / CVaR Methods (Historical, Parametric, Monte Carlo)
+# Advanced VaR / CVaR Methods
 # -----------------------------------------------------------------------------
 def historical_var(returns: pd.Series, conf: float): return returns.quantile(1-conf)
 def historical_cvar(returns: pd.Series, conf: float):
@@ -382,7 +386,7 @@ def parametric_cvar(returns: pd.Series, conf: float):
     mu = returns.mean(); sigma = returns.std()
     return mu - sigma*stats.norm.pdf(stats.norm.ppf(1-conf))/(1-conf)
 def monte_carlo_var(returns: pd.Series, conf: float, n_sim=10000, dist='t'):
-    np.random.seed(42)  # reproducibility
+    np.random.seed(42)
     if len(returns) < 30: return np.nan
     if dist == 'normal':
         mu, sigma = returns.mean(), returns.std()
@@ -457,7 +461,7 @@ def build_historical_stress_table(ticker, start, end, threshold=-0.20):
     return pd.DataFrame(rows).sort_values("Start") if rows else pd.DataFrame()
 
 # -----------------------------------------------------------------------------
-# Styling
+# Styling & Layout
 # -----------------------------------------------------------------------------
 def css():
     return f"""
@@ -515,7 +519,7 @@ def chart_layout(fig, title, height=720):
     return fig
 
 # -----------------------------------------------------------------------------
-# Executive KPI, Charts, Universe, Tearsheet, Stress (unchanged logic)
+# KPI, Price, Risk, Benchmark, Universe, Tearsheet, Stress builders
 # -----------------------------------------------------------------------------
 def build_kpi(ticker, benchmark_label, start, end):
     bench = BENCHMARKS[benchmark_label]
@@ -625,6 +629,7 @@ def build_tearsheet(ticker, benchmark_label, start, end):
     out = OUTPUT_DIR / f"tearsheet_{ticker.replace('^','IDX')}_vs_{bench.replace('^','IDX')}.html"
     qs.reports.html(matched[ticker], benchmark=matched[bench], rf=RISK_FREE_RATE, output=str(out),
                     title=f"{ticker} vs {benchmark_label} | QFA Hedge Fund Tearsheet", compounded=True)
+    plt.close('all')  # free memory after generating image‑heavy report
     html = out.read_text(encoding="utf-8", errors="ignore")
     header = f'<div class="qfa-note"><b>Tearsheet generated.</b><br>{ticker} vs {benchmark_label} ({bench}), RF {RISK_FREE_RATE:.2%}, {len(matched)} obs.</div>'
     return pn.Column(pn.pane.HTML(header, sizing_mode="stretch_width"),
@@ -650,7 +655,7 @@ def build_stress(asset_class, region, start, end):
                      pn.widgets.Tabulator(table, height=560, pagination="remote", page_size=20, sizing_mode="stretch_width"), sizing_mode="stretch_width")
 
 # =============================================================================
-# ENHANCED PORTFOLIO OPTIMIZER – all core strategies with explanations
+# ENHANCED PORTFOLIO OPTIMIZER – all core strategies with institutional explanations
 # =============================================================================
 def build_optimizer(asset_class, region, start, end):
     tickers = get_tickers(asset_class, region)
@@ -665,7 +670,6 @@ def build_optimizer(asset_class, region, start, end):
         S = risk_models.CovarianceShrinkage(prices).ledoit_wolf()
         rf = RISK_FREE_RATE
 
-        # ---------- Strategy calculations ----------
         strategies = {}
 
         # 1. Max Sharpe
@@ -687,7 +691,6 @@ def build_optimizer(asset_class, region, start, end):
         # 3. Maximum Diversification (custom)
         def max_div_portfolio(mu, S):
             n = len(mu)
-            # maximize diversification ratio: (w' * sigma) / sqrt(w' S w)  -> minimize negative
             def neg_div_ratio(w):
                 w = np.array(w)
                 port_vol = np.sqrt(w @ S @ w)
@@ -724,7 +727,6 @@ def build_optimizer(asset_class, region, start, end):
         try:
             hrp = HRPOpt(returns=prices.pct_change().dropna())
             w5 = hrp.optimize(linkage_method='single')
-            # performance needs to be computed manually
             ret5 = np.dot(list(w5.values()), mu)
             vol5 = np.sqrt(np.dot(list(w5.values()), S @ list(w5.values())))
             sharpe5 = (ret5 - rf) / vol5
@@ -789,7 +791,7 @@ def build_optimizer(asset_class, region, start, end):
         return empty_state("Optimizer failed", f"{type(e).__name__}: {str(e)}")
 
 # =============================================================================
-# ADVANCED RISK ANALYTICS TAB (already expanded, included here for completeness)
+# ADVANCED RISK ANALYTICS TAB
 # =============================================================================
 def build_advanced_risk(ticker, benchmark_label, start, end):
     bench = BENCHMARKS[benchmark_label]
